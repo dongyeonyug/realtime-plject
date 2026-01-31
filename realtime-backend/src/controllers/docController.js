@@ -1,0 +1,395 @@
+const db = require("../config/db");
+const Redis = require("ioredis");
+const redis = new Redis();
+
+const createDocument = async (req, res) => {
+  // const { userNo } = req.body; // 문서를 만드는 유저의 ID
+
+  const userNo = req.user.id;
+
+  try {
+    // 1. DB에 빈 문서 생성 (제목/내용은 기본값)
+    const query =
+      "INSERT INTO documents (userNo, title, content) VALUES (?, ?, ?)";
+    const [result] = await db.execute(query, [userNo, "제목 없는 문서", ""]);
+
+    // 2. 생성된 문서의 고유 ID(방 번호가 됨) 가져오기
+    //primary 값 id
+    const newDocId = result.insertId;
+
+    res.status(201).json({
+      message: "새 문서 방이 생성되었습니다.",
+      docId: newDocId, // 프론트엔드는 이 ID를 받아 해당 방 주소로 이동함
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("문서 생성 실패");
+  }
+};
+
+// 1. 특정 유저의 모든 문서 목록 가져오기 (대시보드용) 일단나중에 다시 수정 현재 사용안하고있음
+const readUserDocuments = async (req, res) => {
+  const userNo = req.user.id; // 토큰에서 추출한 진짜 내 ID
+
+  try {
+    const query =
+      "SELECT id, title, content, created_at, updated_at FROM documents WHERE userNo = ? ORDER BY updated_at DESC";
+    const [rows] = await db.execute(query, [userNo]);
+    res.status(200).json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("문서 목록을 가져오는 데 실패했습니다.");
+  }
+};
+
+// 2. 특정 문서 하나만 가져오기 (에디터 입장 시 호출)
+const readDocumentById = async (req, res) => {
+  const { docId } = req.params;
+  const userNo = req.user.userNo; // 현재 접속자
+
+  try {
+    const query = "SELECT * FROM documents WHERE id = ?";
+    const [rows] = await db.execute(query, [docId]);
+
+    if (rows.length === 0) return res.status(404).send("문서 없음");
+
+    // ✅ 소유권 체크
+    if (rows[0].user_id !== userNo) {
+      return res.status(403).json({ message: "이 문서를 볼 권한이 없습니다." });
+    }
+
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("문서 정보를 불러오는 데 실패했습니다.");
+  }
+};
+
+// DB 동기화
+
+const syncToMysql = async (id, userNo, title, content) => {
+  try {
+    const query = `
+  INSERT INTO documents (id, userNo, title, content)
+  VALUES (?, ?, ?, ?)
+  ON DUPLICATE KEY UPDATE 
+    title = VALUES(title),
+    content = VALUES(content), 
+    updated_at = NOW();
+`;
+    await db.execute(query, [id, userNo, title, content]);
+    console.log(`[DB] 문서 저장 완료`);
+  } catch (err) {
+    console.error("[DB Error]", err);
+  }
+};
+
+// API 요청 처리 화살표 함수
+const saveTemp = async (req, res) => {
+  const { id, title, content } = req.body;
+  const userNo = req.user ? req.user.id : null; // 토큰 정보 // ✅ 토큰에서 추출한 신뢰할 수 있는 ID
+  // const redisKey = `temp_doc:${id}`; // userNo를 빼고 문서 번호로만 단일화 추천
+  // await redis.set(redisKey, content, "EX", 3600); // 1시간 뒤 자동 삭제 (메모리 관리)
+
+  if (!userNo) return res.status(401).json({ message: "로그인이 필요합니다." });
+
+  try {
+
+    // 1. 해당 문서의 권한 설정 조회
+    const [rows] = await db.execute(
+      "SELECT userNo, public_role FROM documents WHERE id = ?",
+      [id]
+    );
+
+    if (rows.length === 0) return res.status(404).json({ message: "문서 없음" });
+
+    const doc = rows[0];
+
+    // 2. 편집 권한 검증
+    const isOwner = Number(doc.userNo) === Number(userNo);
+    const canEdit = isOwner || doc.public_role === 'editor';
+
+    if (!canEdit) {
+      return res.status(403).json({ message: "이 문서를 편집할 권한이 없습니다." });
+    }
+
+
+    // await redis.set(redisKey, content);
+    // 1. Redis에 제목과 내용 모두 임시 저장 (JSON 형태로 한 번에 저장 추천)
+    const redisData = JSON.stringify({ title, content });
+    await redis.set(`temp_doc:${id}`, redisData, "EX", 86400); // 24시간 유지
+   
+
+    // 비동기로 DB 동기화 실행
+    await syncToMysql(id, userNo, title, content);
+
+     res.status(200).json({ status: "success" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server Error");
+  }
+};
+
+// // 실시간 db내용 불러오기, redis에 담긴 정보가 가장 최신정보일 가능성이 높으므로 redis에 저장된 데이터를 우선적으로 호출하고 후 순위로 mysql에 담긴 데이터를 호출.
+// const getDocument = async (req, res) => {
+//   const { id } = req.params; // URL에서 id 추출 (예: /api/documents/1)
+//   const redisKey = `temp_doc:${id}:*`; // 해당 문서의 모든 유저 레디스 키 패턴
+
+//   try {
+//     // 1. 먼저 Redis에서 최신 수정본이 있는지 확인
+//     // (패턴 검색이 복잡하므로 여기선 저장할 때 썼던 정확한 키를 알거나, MySQL을 기본으로 하되 Redis를 덮어씌웁니다)
+//     const keys = await redis.keys(`temp_doc:${id}:*`);
+//     let latestContent = null;
+
+//     if (keys.length > 0) {
+//       //"찾은 키들 중에서 첫 번째 내용(가장 최근 수정본)을 가져와서 latestContent 변수에 담아둬."
+//       latestContent = await redis.get(keys[0]);
+//       console.log("[Redis] 최신 임시 저장본을 불러옵니다.");
+//     }
+
+//     // 2. MySQL에서 원본 데이터 불러오기
+//     //user_id as userNo: DB 컬럼명은 user_id지만, 리액트나 서버 코드에서는 보통 카멜 케이스(userNo)를 씀 (별칭 부여)
+//     const [rows] = await db.execute(
+//       'SELECT id, user_id as userNo, title, content FROM documents WHERE id = ?',
+//       [id]
+//     );
+
+//     if (rows.length === 0) {
+//       return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
+//     }
+
+//     const doc = rows[0];
+
+//     // 3. Redis에 더 최신 내용이 있다면 교체해서 응답
+//     if (latestContent) {
+//       doc.content = latestContent;
+//     }
+
+//     res.status(200).json(doc);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send("Server Error");
+//   }
+// };
+
+// // [백엔드] 문서 불러오기 로직 보완
+// const getDocument = async (req, res) => {
+//   const { docId } = req.params;
+//   const userNo = req.user.id; // authMiddleware가 넣어준 현재 접속자 ID
+
+//   try {
+//     // 1. MySQL에서 기본 데이터 로드
+//     const [rows] = await db.execute(
+//       "SELECT id, userNo , title, content FROM documents WHERE id = ?",
+//       [docId],
+//     );
+
+//     if (rows.length === 0) {
+//       return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
+//     }
+
+//     let doc = rows[0];
+
+//     // ✅ 보완: 소유권 확인 (내 문서가 아니면 거절)
+//     if (doc.userNo !== userNo) {
+//       return res.status(403).json({ message: "이 문서를 볼 권한이 없습니다." });
+//     }
+
+//     const tempData = await redis.get(`temp_doc:${id}`);
+
+//     if (tempData) {
+//       try {
+//         // 문자열인 tempData를 자바스크립트 객체로 변환
+//         const parsedData = JSON.parse(tempData);
+
+//         // ❌ doc.content = tempData; (이렇게 하면 JSON 글자가 그대로 들어감)
+//         // ✅ 객체 내부의 알맹이만 골라서 덮어씌우기
+//         if (parsedData.title !== undefined) doc.title = parsedData.title;
+//         if (parsedData.content !== undefined) doc.content = parsedData.content;
+
+//         console.log(`[Redis] ${id}번 문서 최신 임시 데이터 적용 완료`);
+//       } catch (e) {
+//         // 만약 Redis에 JSON이 아닌 순수 문자열만 저장되어 있었다면 예외 처리
+//         doc.content = tempData;
+//       }
+//     }
+
+//     res.status(200).json(doc);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send("Server Error");
+//   }
+// };
+
+const getDocument = async (req, res) => {
+  // 1. 프론트엔드에서 /api/documents/detail/1 로 보냈으므로
+  // 라우터 설정이 /detail/:docId 라면 아래처럼 받아야 합니다.
+  const { docId } = req.params;
+  const userNo = req.user ? req.user.id : null; // 로그인 안 했을 수도 있으므로
+
+  try {
+    // 2. DB 조회
+    const [rows] = await db.execute(
+      "SELECT id, userNo, title, content, public_role FROM documents WHERE id = ?",
+      [docId],
+    );
+
+    if (rows.length === 0)
+      return res.status(404).json({ message: "문서 없음" });
+
+    let doc = rows[0];
+
+    // // 3. 권한 체크
+    // if (Number(doc.userNo) !== Number(userNo)) {
+    //   return res.status(403).json({ message: "권한 없음" });
+    // }
+
+    //값의 종류: 'private'(비공개), 'viewer'(링크가 있으면 보기 가능), 'editor'(링크가 있으면 편집 가능)
+    // 1. 소유자인지 확인
+    const isOwner = userNo && Number(doc.userNo) === Number(userNo);
+
+    // 2. 권한 판별
+    if (!isOwner && doc.public_role === 'private') {
+      return res.status(403).json({ message: "비공개 문서입니다." });
+    }
+
+
+    // 프론트엔드에게 이 유저가 '읽기 전용'인지 알려줌
+    const canEdit = isOwner || doc.public_role === 'editor';
+
+
+    // 4. Redis 데이터 처리 (핵심!)
+    const tempData = await redis.get(`temp_doc:${docId}`); // 변수명을 docId로 통일
+
+    if (tempData) {
+      try {
+        const parsedData = JSON.parse(tempData);
+
+        // 데이터가 객체 형태인지 확인 후 알맹이만 추출
+        if (parsedData && typeof parsedData === "object") {
+          doc.title = parsedData.title ?? doc.title;
+          doc.content = parsedData.content ?? doc.content;
+        }
+      } catch (e) {
+        // 만약 Redis에 JSON이 아닌 생 텍스트가 들어있었다면 그대로 대입
+        doc.content = tempData;
+      }
+    }
+
+    res.status(200).json({doc,canEdit});
+  } catch (err) {
+    console.error("서버 에러 상세:", err); // 터미널에서 에러 원인 확인용
+    res.status(500).json({ message: "서버 오류 발생" });
+  }
+};
+
+
+
+const deleteDocument = async (req, res) => {
+  const { docId } = req.params;
+  const userNo = req.user.id; // authMiddleware에서 넘겨준 인증 정보
+
+  try {
+    // 1. 해당 문서의 작성자가 누구인지 먼저 확인
+    const [doc] = await db.execute('SELECT userNo FROM documents WHERE id = ?', [docId]);
+
+    if (doc.length === 0) {
+      return res.status(404).json({ message: "존재하지 않는 문서입니다." });
+    }
+
+    // 2. 권한 검증: 문서 소유자와 현재 요청자가 일치하는지 확인
+    if (Number(doc[0].userNo) !== Number(userNo)) {
+      return res.status(403).json({ message: "본인이 작성한 문서만 삭제할 수 있습니다." });
+    }
+
+    // 3. 일치한다면 삭제 수행
+    await db.execute('DELETE FROM documents WHERE id = ?', [docId]);
+    
+    res.status(200).json({ message: "문서가 성공적으로 삭제되었습니다." });
+
+  } catch (error) {
+    console.error("문서 삭제 에러:", error);
+    res.status(500).json({ message: "서버 오류로 문서를 삭제하지 못했습니다." });
+  }
+};
+
+
+// backend/controllers/docController.js
+// const updateShareSettings = async (req, res) => {
+//   const { docId, role } = req.body;
+//   const userNo = req.user.id; // 현재 요청자
+
+//   try {
+//     // 1. 문서 주인인지 확인
+//     const [doc] = await db.execute("SELECT userNo FROM documents WHERE id = ?", [docId]);
+//     if (doc.length === 0) return res.status(404).send("문서 없음");
+    
+//     if (Number(doc[0].userNo) !== Number(userNo)) {
+//       return res.status(403).json({ message: "주인만 공유 설정을 변경할 수 있습니다." });
+//     }
+
+//     // 2. public_role 업데이트
+//     await db.execute(
+//       "UPDATE documents SET public_role = ? WHERE id = ?",
+//       [role, docId]
+//     );
+
+//     res.status(200).json({ message: "Success" });
+//   } catch (err) {
+//     res.status(500).send("Server Error");
+//   }
+// };
+
+
+
+// 컨트롤러에서 io 객체를 가져오거나, 이벤트를 발생시키는 로직 추가
+const updateShareSettings = async (req, res) => {
+  const { docId, role } = req.body;
+  const userNo = req.user.id; // 현재 요청자(토큰에서 추출)
+
+  try {
+    // 1. 문서 주인인지 확인
+    const [doc] = await db.execute("SELECT userNo FROM documents WHERE id = ?", [docId]);
+    
+    if (doc.length === 0) {
+      return res.status(404).json({ message: "문서가 존재하지 않습니다." });
+    }
+    
+    if (Number(doc[0].userNo) !== Number(userNo)) {
+      return res.status(403).json({ message: "주인만 공유 설정을 변경할 수 있습니다." });
+    }
+
+    // 2. DB의 public_role 업데이트
+    await db.execute(
+      "UPDATE documents SET public_role = ? WHERE id = ?",
+      [role, docId]
+    );
+
+    // 3. ✅ 실시간 권한 변경 알림 전송 (Socket.io 브로드캐스트)
+    // server.js에서 app.set('io', io)를 설정했다고 가정합니다.
+    const io = req.app.get('io'); 
+    
+    if (io) {
+      // 해당 문서 방(docId)에 있는 모든 사람에게 '권한이 변경됨'을 알림
+      io.to(docId.toString()).emit("permission_changed", { 
+        newRole: role 
+      });
+      console.log(`[Socket] Room ${docId} 권한 변경 알림 전송: ${role}`);
+    }
+
+    res.status(200).json({ message: "공유 설정이 변경되었습니다." });
+  } catch (err) {
+    console.error("공유 설정 변경 에러:", err);
+    res.status(500).json({ message: "서버 오류 발생" });
+  }
+};
+
+module.exports = {
+  createDocument,
+  saveTemp,
+  getDocument,
+  readUserDocuments,
+  readDocumentById,
+  updateShareSettings,
+  deleteDocument
+};
