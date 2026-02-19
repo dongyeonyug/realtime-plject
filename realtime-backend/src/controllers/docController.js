@@ -28,9 +28,10 @@ const createDocument = async (req, res) => {
   }
 };
 
-// 1. 특정 유저의 모든 문서 목록 가져오기 (대시보드용) 일단나중에 다시 수정 현재 사용안하고있음
+// 특정 유저의 모든 문서 목록 가져오기 (대시보드용)
+// 유저가 생성한 모든 문서를 확인할 수 있습니다.
 const readUserDocuments = async (req, res) => {
-  const userNo = req.user.id; // 토큰에서 추출한 진짜 내 ID
+  const userNo = req.user.id; // 토큰에서 추출한 유저의 고유 번호(PK)
 
   try {
     const query =
@@ -43,7 +44,7 @@ const readUserDocuments = async (req, res) => {
   }
 };
 
-// 2. 특정 문서 하나만 가져오기 (에디터 입장 시 호출)
+// 2특정 문서 하나만 가져오기 (에디터 입장 시 호출)
 const readDocumentById = async (req, res) => {
   const { docId } = req.params;
   const userNo = req.user.userNo; // 현재 접속자
