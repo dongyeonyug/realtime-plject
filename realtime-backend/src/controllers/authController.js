@@ -17,7 +17,7 @@ const register = async (req, res) => {
     if (existingUserByEmail.length > 0)
       return res.status(400).json({ message: "이미 존재하는 이메일입니다." });
 
-    // 1. 이미 존재하는 아이디인지 확인
+    // 이미 존재하는 아이디인지 확인
     const [existingUserById] = await db.execute(
       "SELECT * FROM users WHERE user_id = ?",
       [user_id],
@@ -25,11 +25,11 @@ const register = async (req, res) => {
     if (existingUserById.length > 0)
       return res.status(400).json({ message: "이미 존재하는 아이디입니다." });
 
-    // 2. 비밀번호 암호화 (Salt사용)
+    // 비밀번호 암호화 (Salt사용)
     //해싱
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3. 유저 저장
+    // 유저 저장
     await db.execute(
       "INSERT INTO users (user_id,email,password, name) VALUES (?, ?, ?, ?)",
       [user_id, email, hashedPassword, name],
@@ -37,7 +37,7 @@ const register = async (req, res) => {
 
     res.status(201).json({ message: "회원가입 성공!" });
   } catch (err) {
-    // MySQL의 중복 키 에러 코드는 'ER_DUP_ENTRY' 또는 1062입니다.
+    // MySQL의 중복 키 에러 코드는 'ER_DUP_ENTRY' 또는 1062
     if (err.code === "ER_DUP_ENTRY") {
       return res
         .status(400)
@@ -49,9 +49,6 @@ const register = async (req, res) => {
 };
 
 //로그인
-
-
-
 const login = async (req, res) => {
   const { user_id, password } = req.body;
 
