@@ -1,7 +1,7 @@
 // controllers/userController.js
 const db = require('../config/db'); // 기존 db 설정 불러오기
 
-//회원가입
+
 const createUser = async (req, res) => {
   const { id, password, email, name } = req.body;
 
