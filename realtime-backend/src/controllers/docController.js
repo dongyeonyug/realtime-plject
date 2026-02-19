@@ -44,31 +44,35 @@ const readUserDocuments = async (req, res) => {
   }
 };
 
-// 2특정 문서 하나만 가져오기 (에디터 입장 시 호출)
-const readDocumentById = async (req, res) => {
-  const { docId } = req.params;
-  const userNo = req.user.userNo; // 현재 접속자
+//현재 사용되지 않습니다.
+// // 2특정 문서 하나만 가져오기 (에디터 입장 시 호출)
+// const readDocumentById = async (req, res) => {
+//   const { docId } = req.params;
+//   const userNo = req.user.userNo; // 현재 접속자
 
-  try {
-    const query = "SELECT * FROM documents WHERE id = ?";
-    const [rows] = await db.execute(query, [docId]);
+//   try {
+//     const query = "SELECT * FROM documents WHERE id = ?";
+//     const [rows] = await db.execute(query, [docId]);
 
-    if (rows.length === 0) return res.status(404).send("문서 없음");
+//     if (rows.length === 0) return res.status(404).send("문서 없음");
 
-    // 소유권 체크
-    if (rows[0].user_id !== userNo) {
-      return res.status(403).json({ message: "이 문서를 볼 권한이 없습니다." });
-    }
+//     // 소유권 체크
+//     if (rows[0].user_id !== userNo) {
+//       return res.status(403).json({ message: "이 문서를 볼 권한이 없습니다." });
+//     }
 
-    res.status(200).json(rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("문서 정보를 불러오는 데 실패했습니다.");
-  }
-};
+//     res.status(200).json(rows[0]);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send("문서 정보를 불러오는 데 실패했습니다.");
+//   }
+// };
+
+
+//  redis와 mysql 두 가지 DB를 사용하여 실시간 데이터 저장을 구현합니다.
+// 모든 요청이 mysql로만 몰리면 B 락(Lock)이 걸리거나 느려질 수 있기에, 하드디스크 보다 빠른 메모리를 사용, 즉 레디스를 활용하는 것이 실시간 편집 기능 구현에 적합하다 판단했습니다.
 
 // DB 동기화
-
 const syncToMysql = async (id, userNo, title, content) => {
   try {
     const query = `
@@ -86,18 +90,17 @@ const syncToMysql = async (id, userNo, title, content) => {
   }
 };
 
-// API 요청 처리 화살표 함수
+// API 요청 처리 
+// 사용자가 에디터에서 글을 쓰면 프론트엔드는 아주 짧은 주기로 이 API를 호출함.
 const saveTemp = async (req, res) => {
   const { id, title, content } = req.body;
-  const userNo = req.user ? req.user.id : null; // 토큰 정보 // ✅ 토큰에서 추출한 신뢰할 수 있는 ID
-  // const redisKey = `temp_doc:${id}`; // userNo를 빼고 문서 번호로만 단일화 추천
-  // await redis.set(redisKey, content, "EX", 3600); // 1시간 뒤 자동 삭제 (메모리 관리)
+  const userNo = req.user ? req.user.id : null; // 토큰 정보 , 토큰에서 추출한 유저의 고유 번호(PK)
 
   if (!userNo) return res.status(401).json({ message: "로그인이 필요합니다." });
 
   try {
 
-    // 1. 해당 문서의 권한 설정 조회
+    // 해당 문서의 권한 설정 조회
     const [rows] = await db.execute(
       "SELECT userNo, public_role FROM documents WHERE id = ?",
       [id]
@@ -107,17 +110,16 @@ const saveTemp = async (req, res) => {
 
     const doc = rows[0];
 
-    // 2. 편집 권한 검증
+    // 편집 권한 검증
+    //req.user.id와 DB의 doc.userNo를 비교하여, 본인이거나 편집 권한(editor)이 있는 사람만 수정할 수 있도록 함.
     const isOwner = Number(doc.userNo) === Number(userNo);
+    //본인 외의 사람에게 문서 편집 권한을 줄 수 있습니다.
     const canEdit = isOwner || doc.public_role === 'editor';
-
     if (!canEdit) {
       return res.status(403).json({ message: "이 문서를 편집할 권한이 없습니다." });
     }
 
-
-    // await redis.set(redisKey, content);
-    // 1. Redis에 제목과 내용 모두 임시 저장 (JSON 형태로 한 번에 저장 추천)
+    // Redis에 문서 제목과 내용 모두 임시 저장 (JSON 형태로 한 번에 저장)
     const redisData = JSON.stringify({ title, content });
     await redis.set(`temp_doc:${id}`, redisData, "EX", 86400); // 24시간 유지
    
@@ -132,97 +134,7 @@ const saveTemp = async (req, res) => {
   }
 };
 
-// // 실시간 db내용 불러오기, redis에 담긴 정보가 가장 최신정보일 가능성이 높으므로 redis에 저장된 데이터를 우선적으로 호출하고 후 순위로 mysql에 담긴 데이터를 호출.
-// const getDocument = async (req, res) => {
-//   const { id } = req.params; // URL에서 id 추출 (예: /api/documents/1)
-//   const redisKey = `temp_doc:${id}:*`; // 해당 문서의 모든 유저 레디스 키 패턴
-
-//   try {
-//     // 1. 먼저 Redis에서 최신 수정본이 있는지 확인
-//     // (패턴 검색이 복잡하므로 여기선 저장할 때 썼던 정확한 키를 알거나, MySQL을 기본으로 하되 Redis를 덮어씌웁니다)
-//     const keys = await redis.keys(`temp_doc:${id}:*`);
-//     let latestContent = null;
-
-//     if (keys.length > 0) {
-//       //"찾은 키들 중에서 첫 번째 내용(가장 최근 수정본)을 가져와서 latestContent 변수에 담아둬."
-//       latestContent = await redis.get(keys[0]);
-//       console.log("[Redis] 최신 임시 저장본을 불러옵니다.");
-//     }
-
-//     // 2. MySQL에서 원본 데이터 불러오기
-//     //user_id as userNo: DB 컬럼명은 user_id지만, 리액트나 서버 코드에서는 보통 카멜 케이스(userNo)를 씀 (별칭 부여)
-//     const [rows] = await db.execute(
-//       'SELECT id, user_id as userNo, title, content FROM documents WHERE id = ?',
-//       [id]
-//     );
-
-//     if (rows.length === 0) {
-//       return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
-//     }
-
-//     const doc = rows[0];
-
-//     // 3. Redis에 더 최신 내용이 있다면 교체해서 응답
-//     if (latestContent) {
-//       doc.content = latestContent;
-//     }
-
-//     res.status(200).json(doc);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).send("Server Error");
-//   }
-// };
-
-// // [백엔드] 문서 불러오기 로직 보완
-// const getDocument = async (req, res) => {
-//   const { docId } = req.params;
-//   const userNo = req.user.id; // authMiddleware가 넣어준 현재 접속자 ID
-
-//   try {
-//     // 1. MySQL에서 기본 데이터 로드
-//     const [rows] = await db.execute(
-//       "SELECT id, userNo , title, content FROM documents WHERE id = ?",
-//       [docId],
-//     );
-
-//     if (rows.length === 0) {
-//       return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
-//     }
-
-//     let doc = rows[0];
-
-//     // ✅ 보완: 소유권 확인 (내 문서가 아니면 거절)
-//     if (doc.userNo !== userNo) {
-//       return res.status(403).json({ message: "이 문서를 볼 권한이 없습니다." });
-//     }
-
-//     const tempData = await redis.get(`temp_doc:${id}`);
-
-//     if (tempData) {
-//       try {
-//         // 문자열인 tempData를 자바스크립트 객체로 변환
-//         const parsedData = JSON.parse(tempData);
-
-//         // ❌ doc.content = tempData; (이렇게 하면 JSON 글자가 그대로 들어감)
-//         // ✅ 객체 내부의 알맹이만 골라서 덮어씌우기
-//         if (parsedData.title !== undefined) doc.title = parsedData.title;
-//         if (parsedData.content !== undefined) doc.content = parsedData.content;
-
-//         console.log(`[Redis] ${id}번 문서 최신 임시 데이터 적용 완료`);
-//       } catch (e) {
-//         // 만약 Redis에 JSON이 아닌 순수 문자열만 저장되어 있었다면 예외 처리
-//         doc.content = tempData;
-//       }
-//     }
-
-//     res.status(200).json(doc);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).send("Server Error");
-//   }
-// };
-
+//DB에 저장되어 있던 문서의 제목과 내용을 불러옵니다.
 const getDocument = async (req, res) => {
   // 1. 프론트엔드에서 /api/documents/detail/1 로 보냈으므로
   // 라우터 설정이 /detail/:docId 라면 아래처럼 받아야 합니다.
