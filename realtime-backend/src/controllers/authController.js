@@ -1,3 +1,5 @@
+//회원가입,로그인,로그아웃 관련 로직입니다.
+
 const bcrypt = require("bcrypt");
 const db = require("../config/db"); // 기존 DB 설정 불러오기
 
