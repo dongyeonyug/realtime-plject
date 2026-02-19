@@ -1,6 +1,7 @@
 // controllers/userController.js
 const db = require('../config/db'); // 기존 db 설정 불러오기
 
+//회원가입
 const createUser = async (req, res) => {
   const { id, password, email, name } = req.body;
 
@@ -30,7 +31,7 @@ const getUser = async (req, res) => {
   const { userid } = req.params;
 
   try {
-    // 비밀번호(password)를 제외하고 조회하는 것이 정석입니다.
+    // 비밀번호(password)를 제외하고 조회.
     const query = 'SELECT user_id, email, name FROM users WHERE user_id = ?';
     const [rows] = await db.execute(query, [userid]);
 
