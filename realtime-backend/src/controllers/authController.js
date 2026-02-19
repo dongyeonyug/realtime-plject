@@ -80,6 +80,7 @@ const login = async (req, res) => {
   }
 };
 
+//로그아웃
 const logout = async (req, res) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -87,13 +88,13 @@ const logout = async (req, res) => {
 
     if (!token) return res.status(400).json({ message: "토큰이 없습니다." });
 
-    // 1. 토큰 해독해서 만료 시간(exp) 확인
+    // 토큰 해독해서 만료 시간(exp) 확인
     const decoded = jwt.decode(token);
     const timeLeft = decoded.exp * 1000 - Date.now(); // 밀리초 단위 계산
 
     if (timeLeft > 0) {
-      // 2. ✅ Redis에 블랙리스트 등록 (키: 토큰, 값: "logout")
-      // timeLeft(ms) 동안만 유지되고 자동 삭제됨
+      // Redis에 블랙리스트 등록 (키: 토큰, 값: "logout")
+      // timeLeft(ms) 동안 즉, jwt토큰의 남은 유효기간동안 유지되고 자동 삭제됨
       await redisClient.setEx(token, Math.ceil(timeLeft / 1000), "logout");
     }
 
