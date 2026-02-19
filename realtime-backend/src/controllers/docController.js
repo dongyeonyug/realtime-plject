@@ -3,18 +3,19 @@ const Redis = require("ioredis");
 const redis = new Redis();
 
 const createDocument = async (req, res) => {
-  // const { userNo } = req.body; // 문서를 만드는 유저의 ID
 
+  // 토큰에서 추출한 유저의 고유 번호(PK)를 가져온다.
   const userNo = req.user.id;
 
   try {
-    // 1. DB에 빈 문서 생성 (제목/내용은 기본값)
+    // 2. MySQL DB(documents 테이블)에 새로운 행(Row)을 추가.
+    // 제목은 "제목 없는 문서", 내용은 빈 값("")으로 초기 세팅.
     const query =
       "INSERT INTO documents (userNo, title, content) VALUES (?, ?, ?)";
     const [result] = await db.execute(query, [userNo, "제목 없는 문서", ""]);
 
-    // 2. 생성된 문서의 고유 ID(방 번호가 됨) 가져오기
-    //primary 값 id
+    // MySQL이 자동으로 생성해준 (documents)문서의 고유 ID(Primary Key)를 가져옴.
+    // 이 ID는 소켓 통신에서 '방 번호'의 기준이 된다.
     const newDocId = result.insertId;
 
     res.status(201).json({
@@ -53,7 +54,7 @@ const readDocumentById = async (req, res) => {
 
     if (rows.length === 0) return res.status(404).send("문서 없음");
 
-    // ✅ 소유권 체크
+    // 소유권 체크
     if (rows[0].user_id !== userNo) {
       return res.status(403).json({ message: "이 문서를 볼 권한이 없습니다." });
     }
