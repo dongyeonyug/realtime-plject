@@ -136,13 +136,12 @@ const saveTemp = async (req, res) => {
 
 //DB에 저장되어 있던 문서의 제목과 내용을 불러옵니다.
 const getDocument = async (req, res) => {
-  // 1. 프론트엔드에서 /api/documents/detail/1 로 보냈으므로
-  // 라우터 설정이 /detail/:docId 라면 아래처럼 받아야 합니다.
+  
   const { docId } = req.params;
-  const userNo = req.user ? req.user.id : null; // 로그인 안 했을 수도 있으므로
+  const userNo = req.user ? req.user.id : null; 
 
   try {
-    // 2. DB 조회
+    // DB 조회
     const [rows] = await db.execute(
       "SELECT id, userNo, title, content, public_role FROM documents WHERE id = ?",
       [docId],
@@ -153,27 +152,22 @@ const getDocument = async (req, res) => {
 
     let doc = rows[0];
 
-    // // 3. 권한 체크
-    // if (Number(doc.userNo) !== Number(userNo)) {
-    //   return res.status(403).json({ message: "권한 없음" });
-    // }
-
-    //값의 종류: 'private'(비공개), 'viewer'(링크가 있으면 보기 가능), 'editor'(링크가 있으면 편집 가능)
-    // 1. 소유자인지 확인
+    //권한값의 종류: 'private'(비공개), 'viewer'(링크가 있으면 보기 가능), 'editor'(링크가 있으면 편집 가능)
+    
+    // 소유자인지 확인
     const isOwner = userNo && Number(doc.userNo) === Number(userNo);
 
-    // 2. 권한 판별
+    // 권한 판별(private)
     if (!isOwner && doc.public_role === 'private') {
       return res.status(403).json({ message: "비공개 문서입니다." });
     }
-
 
     // 프론트엔드에게 이 유저가 '읽기 전용'인지 알려줌
     const canEdit = isOwner || doc.public_role === 'editor';
 
 
-    // 4. Redis 데이터 처리 (핵심!)
-    const tempData = await redis.get(`temp_doc:${docId}`); // 변수명을 docId로 통일
+    // Redis 데이터 처리 
+    const tempData = await redis.get(`temp_doc:${docId}`); 
 
     if (tempData) {
       try {
