@@ -1,26 +1,26 @@
-1.first commit
-아직 구현만 시도한 단계라 코드 및 ui가 깔끔하지 않습니다. openai의 도움을 많이 받은 터라 이질 적인 형태의 주석 또한 많습니다. 참고 바랍니다.
-
-구글독스, 노션 같은 동시편집기능을 구현했습니다. 
-
-사용한 기술
--react+vite+js
--nodejs+express
--redis+mysql
--socket.io
-
-jwt를 활용해 토큰을 발급해 로컬스토리지에 저장하는 방식으로 로그인을 구현.
-로그아웃 시 블랙리스트 처리하여 redis에 일시저장.
-
-편집화면 작성 시 우선적으로 해당내용 redis에 저장한 후 mysql에 저장 되는 방식으로 실시간 저장 구현.
-db불러오는 과정에서 또한 무조건적으로 mysql에 접근하는게 아닌 redis에 1차적으로 접근.
-socket을 통해 여러 유저가 동시에 편집 가능.
-
-1.나만 보기
-2.보기만 가능
-3.편집 및 보기 가능
-
-하나의 문서에 대해 다음 세 가지 권한 부여 가능
 
 
+**Socket.io와 Redis를 활용한 실시간 동시 편집 플랫폼**
 
+데이터의 무결성과 서버 부하 감소를 위해 **Caching Strategy**를 적용했습니다.
+
+* **Read/Write Flow**: 모든 편집 데이터는 **Redis**에 우선 저장(L1)된 후 **MySQL**로 비동기 동기화됩니다. 조회 시에도 Redis를 먼저 참조하여 DB 부하를 최소화합니다.
+* **Real-time**: **Socket.io**를 통해 다수 사용자의 편집 상태를 실시간 동기화합니다.
+* **Auth**: **JWT** 인증 방식을 사용하며, 로그아웃 시 토큰을 Redis **Blacklist**에 등록하여 보안을 강화했습니다.
+
+## Stack
+
+* **Frontend**: React (Vite), Socket.io-client
+* **Backend**: Node.js (Express), Socket.io
+* **Database**: Redis, MySQL
+* **Auth**: JWT (JSON Web Token)
+
+## Key Features
+
+* **실시간 동시 편집**: 여러 유저가 동시에 문서 수정 가능
+* **3단계 권한 제어**:
+1. **나만 보기** (Private)
+2. **보기 가능** (ReadOnly)
+3. **편집 및 보기 가능** (Full Access)
+
+* **세션 관리**: Redis를 활용한 효율적인 토큰 만료 및 로그아웃 처리
