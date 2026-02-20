@@ -21,10 +21,10 @@ app.use('/api', authRoutes.routes);
 app.use('/api', docRoutes.routes);
 app.use('/api', userRoutes.routes);
 
-// 1. HTTP 서버 생성
+// HTTP 서버 생성
 const server = http.createServer(app);
 
-// 2. ✅ 소켓 핸들러에 서버 전달 및 io 객체 등록 (한 번만 실행)
+// 소켓 핸들러에 서버 전달 및 io 객체 등록 (한 번만 실행)
 const io = socketHandler(server); 
 app.set('io', io); 
 
