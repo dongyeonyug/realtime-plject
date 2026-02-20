@@ -125,7 +125,9 @@ const saveTemp = async (req, res) => {
    
 
     // 비동기로 DB 동기화 실행
-    await syncToMysql(id, userNo, title, content);
+    // await syncToMysql(id, userNo, title, content);
+    
+    syncToMysql(id, userNo, title, content);
 
      res.status(200).json({ status: "success" });
   } catch (err) {
@@ -135,6 +137,7 @@ const saveTemp = async (req, res) => {
 };
 
 //DB에 저장되어 있던 문서의 제목과 내용을 불러옵니다.
+//우선 mysql에서 데이터를 불러옵니다. 단, 레디스에 데이터가 있다면 최신 정보입니다. 레디스 값으로 덮어씁니다. 
 const getDocument = async (req, res) => {
   
   const { docId } = req.params;
@@ -192,25 +195,25 @@ const getDocument = async (req, res) => {
 };
 
 
-
+//문서를 삭제합니다.
 const deleteDocument = async (req, res) => {
   const { docId } = req.params;
-  const userNo = req.user.id; // authMiddleware에서 넘겨준 인증 정보
+  const userNo = req.user.id; // authMiddleware에서 넘겨준 인증 정보(토큰에서 추출한 유저의 고유 번호(PK))
 
   try {
-    // 1. 해당 문서의 작성자가 누구인지 먼저 확인
+    // 해당 문서의 작성자가 누구인지 먼저 확인
     const [doc] = await db.execute('SELECT userNo FROM documents WHERE id = ?', [docId]);
 
     if (doc.length === 0) {
       return res.status(404).json({ message: "존재하지 않는 문서입니다." });
     }
 
-    // 2. 권한 검증: 문서 소유자와 현재 요청자가 일치하는지 확인
+    // 권한 검증: 문서 소유자와 현재 요청자가 일치하는지 확인
     if (Number(doc[0].userNo) !== Number(userNo)) {
       return res.status(403).json({ message: "본인이 작성한 문서만 삭제할 수 있습니다." });
     }
 
-    // 3. 일치한다면 삭제 수행
+    // 문서 소유자와 현재 삭제 요청자가 일치한다면 삭제 수행
     await db.execute('DELETE FROM documents WHERE id = ?', [docId]);
     
     res.status(200).json({ message: "문서가 성공적으로 삭제되었습니다." });
@@ -220,34 +223,6 @@ const deleteDocument = async (req, res) => {
     res.status(500).json({ message: "서버 오류로 문서를 삭제하지 못했습니다." });
   }
 };
-
-
-// backend/controllers/docController.js
-// const updateShareSettings = async (req, res) => {
-//   const { docId, role } = req.body;
-//   const userNo = req.user.id; // 현재 요청자
-
-//   try {
-//     // 1. 문서 주인인지 확인
-//     const [doc] = await db.execute("SELECT userNo FROM documents WHERE id = ?", [docId]);
-//     if (doc.length === 0) return res.status(404).send("문서 없음");
-    
-//     if (Number(doc[0].userNo) !== Number(userNo)) {
-//       return res.status(403).json({ message: "주인만 공유 설정을 변경할 수 있습니다." });
-//     }
-
-//     // 2. public_role 업데이트
-//     await db.execute(
-//       "UPDATE documents SET public_role = ? WHERE id = ?",
-//       [role, docId]
-//     );
-
-//     res.status(200).json({ message: "Success" });
-//   } catch (err) {
-//     res.status(500).send("Server Error");
-//   }
-// };
-
 
 
 // 컨트롤러에서 io 객체를 가져오거나, 이벤트를 발생시키는 로직 추가
