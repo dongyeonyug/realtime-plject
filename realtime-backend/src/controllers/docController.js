@@ -1,3 +1,5 @@
+//문서 생성, 저장, 삭제, 권한 여부에 관한 로직입니다.
+
 const db = require("../config/db");
 const Redis = require("ioredis");
 const redis = new Redis();
