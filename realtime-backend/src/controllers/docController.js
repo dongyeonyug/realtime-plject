@@ -126,7 +126,8 @@ const saveTemp = async (req, res) => {
 
     // 비동기로 DB 동기화 실행
     // await syncToMysql(id, userNo, title, content);
-    
+
+    //db동기화
     syncToMysql(id, userNo, title, content);
 
      res.status(200).json({ status: "success" });
@@ -225,13 +226,14 @@ const deleteDocument = async (req, res) => {
 };
 
 
-// 컨트롤러에서 io 객체를 가져오거나, 이벤트를 발생시키는 로직 추가
+// 컨트롤러에서 io 객체를 가져오거나, 이벤트를 발생시키는 로직 
+// 문서 주인 본인의 문서 접근 권한 변경사항을 반영합니다.(권한값의 종류: 'private'(비공개), 'viewer'(링크가 있으면 보기 가능), 'editor'(링크가 있으면 편집 가능))
 const updateShareSettings = async (req, res) => {
   const { docId, role } = req.body;
-  const userNo = req.user.id; // 현재 요청자(토큰에서 추출)
+  const userNo = req.user.id; // 현재 요청자(토큰에서 추출한 유저의 고유 번호(PK))
 
   try {
-    // 1. 문서 주인인지 확인
+    // 문서 주인인지 확인
     const [doc] = await db.execute("SELECT userNo FROM documents WHERE id = ?", [docId]);
     
     if (doc.length === 0) {
@@ -242,13 +244,13 @@ const updateShareSettings = async (req, res) => {
       return res.status(403).json({ message: "주인만 공유 설정을 변경할 수 있습니다." });
     }
 
-    // 2. DB의 public_role 업데이트
+    // DB의 public_role 업데이트
     await db.execute(
       "UPDATE documents SET public_role = ? WHERE id = ?",
       [role, docId]
     );
 
-    // 3. ✅ 실시간 권한 변경 알림 전송 (Socket.io 브로드캐스트)
+    // 실시간 권한 변경 알림 전송 (Socket.io 브로드캐스트)
     // server.js에서 app.set('io', io)를 설정했다고 가정합니다.
     const io = req.app.get('io'); 
     
