@@ -28,7 +28,7 @@ const socketHandler = (server) => {
     });
   });
 
-  return io; // ✅ server.js에서 사용할 수 있도록 리턴
+  return io; // server.js에서 사용할 수 있도록 리턴
 };
 
 module.exports = socketHandler;
